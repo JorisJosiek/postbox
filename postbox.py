@@ -40,7 +40,7 @@ class Chain:
             self.currentSID = None
         return self.currentSID
     
-    def change_comment(self, comment):
+    def change_comment(self, comment:str):
         '''
         Change comment to display in the stat command
         '''
@@ -51,7 +51,7 @@ class Chain:
         self.change_comment(new_comment)
         self.currentSID = None
     
-    def assign_SID(self, newSID):
+    def assign_SID(self, newSID:int):
         new_comment = "[SID {:06}]".format(newSID)
         self.change_comment(new_comment)
         self.currentSID = self.get_SID()
@@ -59,7 +59,7 @@ class Chain:
     
 class ChainManager:
     def __init__(self, powr_proc, wrdata_path, use_chains):
-        self.chains = {}
+        self.chains : dict[int, Chain] = {}
         self.powr_proc = powr_proc
         self.wrdata_path = wrdata_path
         self.usable_numbers = use_chains
@@ -80,6 +80,9 @@ class ChainManager:
         return [chain for chain in self.chains.values() if chain.currentSID != None and
                 ('ACTIVE' in chain.wrstart or 'ACTIVE' in chain.wruniq or 'ACTIVE' in chain.formal)]
 
+    def write_chain_comment(self, chain:Chain):
+        subprocess.run([self.powr_proc+'status.com', 'name', 'wruniq{}'.format(chain.number), chain.comment], capture_output=True)
+
 
     def load_chains(self):
         '''
@@ -99,6 +102,8 @@ class ChainManager:
                           self.wrdata_path.format(chain_number), 
                           ket[6])
             self.chains[chain.number] = chain
+
+    
 
 
 #### JOB HANDLING ####
@@ -137,7 +142,7 @@ class JobManager:
         self.powr_proc = powr_proc
         self.save_path = save_path
         self.file_header = None
-        self.jobs = {}
+        self.jobs : dict[int, Job] = {}
         self.load_jobs_file()
 
     def load_jobs_file(self):
@@ -165,7 +170,7 @@ class JobManager:
             self.jobs[sid] = job
             self.update_model_path(job)
 
-    def update_model_path(self, job):
+    def update_model_path(self, job:Job):
         if job.status == 'Complete':
             job.model_path = self.save_path + str(job.SID) + '/'
         else:
@@ -209,68 +214,21 @@ class JobManager:
     def filter_by_status(self, status):
         return [job for job in self.jobs.values() if job.status == status]
     
-    def ready_to_stage(self, job):
+    def ready_to_stage(self, job:Job):
         return ( job.dependent_SID in self.jobs and self.jobs[job.dependent_SID].status == 'Complete' )
     
-    def load_job_to_chain(self, job, chain):
+    def prioritize_jobs(self, jobs_list):
+        # Add code to change the order of the jobs and return in a new list
+        ordered_jobs_list = jobs_list
+        return ordered_jobs_list
+    
+    def submit_job(self, job:Job, host):
         '''
-        Loads a model into a chain. WARNING: handles file operations incl. copying and deleting, modify with care.
+        Submits the wrstart to PoWR for a job.
         '''
-        # Check if old model files are all there.
-        old_model_path = self.jobs[job.dependent_SID].model_path
-        required_files = ['CARDS', 
-                          'DATOM', 
-                          'FEDAT', 
-                          'FEDAT_FORMAL', 
-                          'FGRID', 
-                          'FORMAL_CARDS', 
-                          'MODEL', 
-                          'NEWDATOM_INPUT', 
-                          'NEWFORMAL_CARDS_INPUT']
-        
-        required_file_check = {}
-        for file in required_files:
-            if not os.path.exists(old_model_path + file):
-                required_file_check[file] = False
-            else:
-                required_file_check[file] = True
-        if False in required_file_check.values():
-            raise RuntimeError("Dependencies missing!\n Path: {}\n Missing Files: {}".format(
-                old_model_path, [f for f in required_files if not required_file_check[f]]))
-
-        # Check if the chain is occupied. Should not happen here because ChainManager.get_free_chains()
-        # already checks this before this chain is used for a new job, but redundancy is very important
-        # here given the chain's wrdata directory is about to be wiped clean.
-        if chain.currentSID != None:
-            raise RuntimeError("Tried to use an occupied chain. Chain {} with SID {:06}".format(
-                chain.number, chain.currentSID))
-
-        # Clear the chain
-        for entry in os.scandir(chain.path):
-            full_path = entry.path
-            if entry.is_dir(follow_symlinks=False):
-                shutil.rmtree(full_path)
-            else:
-                os.remove(full_path)
-
-        # Generate new CARDS
-        old_cards_path = old_model_path + 'CARDS'
-        new_cards_path = chain.path + 'CARDS'
-        
-        self.generateCARDS(old_cards_path, new_cards_path, job.params_string, job.SID)
-
-        # Fill the chain
-        for file in required_files:
-            if file != 'CARDS':
-                shutil.copy2(old_model_path + file, chain.path + file, follow_symlinks=False)
-        shutil.copy2(old_model_path + 'MODEL', chain.path + 'MODEL_OLD')
-
-
-        # Bookkeeping
-        job.change_chain(chain.number)
-        chain.assign_SID(job.SID)
-        subprocess.run([self.powr_proc+'status.com', 'name', 'wruniq{}'.format(chain.number), chain.comment], capture_output=True)
-
+        subprocess.run([self.powr_proc+'submit.com', 
+                        'wrstart{}'.format(job.currentChain), 
+                        'to-{}'.format(host)], capture_output=True)
 
     def generateCARDS(self, old_cards_path, new_cards_path, params_string, sid=999999):
         '''
@@ -302,15 +260,6 @@ class JobManager:
         
         with open(new_cards_path, 'w') as f:
             f.write(new_cards_str)
-
-    def submit_job(self, job, host):
-        '''
-        Submits the wrstart to PoWR for a job.
-        '''
-        subprocess.run([self.powr_proc+'submit.com', 
-                        'wrstart{}'.format(job.currentChain), 
-                        'to-{}'.format(host)], capture_output=True)
-
 
 
 
@@ -365,28 +314,32 @@ class Scheduler:
         '''
         Checks to make sure that Ready indeed have a chain number assigned.
         '''
+        changes_made = False
         for job in self.JM.filter_by_status('Ready'):
             if job.currentChain == None:
                 print("[SCHEDULER] Looks like job SID {:06} with status 'Ready' does not have a chain assignment.".format(job.SID))
                 job.change_status('Waiting')
                 print("[SCHEDULER] --> Job SID {:06} changed to status 'Waiting'.".format(job.SID))
+                changes_made = True
+        if changes_made:
+            self.JM.save_jobs_file()
 
     def active_job_consistency_check(self):
         '''
         Checks to make sure that active PoWR models are also marked as active. Helps to keep track of manual launches.
         '''
+        changes_made = False
         for chain in self.CM.get_active_chains():
             job = self.JM.jobs[chain.currentSID]
             if job.status == 'Ready':
                 print("[SCHEDULER] Looks like job SID {:06} with status 'Ready', currently on chain {}, has already been submitted.".format(job.SID, chain.number))
                 job.change_status('Active')
                 print("[SCHEDULER] --> Job SID {:06} changed to status 'Active'.".format(job.SID))
+                changes_made = True
+        if changes_made:
+            self.JM.save_jobs_file()
             
 
-    def prioritize_jobs(self, jobs_list):
-        # Add code to change the order of the jobs and return in a new list
-        ordered_jobs_list = jobs_list
-        return ordered_jobs_list
     
     def get_machine_occupancy(self):
         '''
@@ -418,7 +371,7 @@ class Scheduler:
         free_cores_dict = {host : max(occupancy[host][1]-occupancy[host][0], 0) for host in occupancy}
         ordered_hosts = sorted(free_cores_dict, key=free_cores_dict.get, reverse=True)
         non_prioritized = [host for host in ordered_hosts if host not in self.machine_priority]
-        prioritized = [host for host in ordered_hosts if host in self.machine_priority] # Important because only ordered_hosts are available
+        prioritized = [host for host in self.machine_priority if host in ordered_hosts] # Important because only ordered_hosts are available
 
         machine_order = []
         for host in prioritized:
@@ -429,6 +382,65 @@ class Scheduler:
                 machine_order.append(host)
 
         return machine_order
+    
+    def load_job_to_chain(self, job:Job, chain:Chain):
+        '''
+        Loads a model into a chain. WARNING: handles file operations incl. copying and deleting, modify with care.
+        '''
+        # Check if old model files are all there.
+        old_model_path = self.JM.jobs[job.dependent_SID].model_path
+        required_files = ['CARDS', 
+                          'DATOM', 
+                          'FEDAT', 
+                          'FEDAT_FORMAL', 
+                          'FGRID', 
+                          'FORMAL_CARDS', 
+                          'MODEL', 
+                          'NEWDATOM_INPUT', 
+                          'NEWFORMAL_CARDS_INPUT']
+        
+        required_file_check = {}
+        for file in required_files:
+            if not os.path.exists(old_model_path + file):
+                required_file_check[file] = False
+            else:
+                required_file_check[file] = True
+        if False in required_file_check.values():
+            raise RuntimeError("Dependencies missing!\n Path: {}\n Missing Files: {}".format(
+                old_model_path, [f for f in required_files if not required_file_check[f]]))
+
+        # Check if the chain is occupied. Should not happen here because ChainManager.get_free_chains()
+        # already checks this before this chain is used for a new job, but redundancy is very important
+        # here given the chain's wrdata directory is about to be wiped clean.
+        if chain.currentSID != None:
+            raise RuntimeError("Tried to use an occupied chain. Chain {} with SID {:06}".format(
+                chain.number, chain.currentSID))
+
+        # Clear the chain
+        for entry in os.scandir(chain.path):
+            full_path = entry.path
+            if entry.is_dir(follow_symlinks=False):
+                shutil.rmtree(full_path)
+            else:
+                os.remove(full_path)
+
+        # Generate new CARDS
+        old_cards_path = old_model_path + 'CARDS'
+        new_cards_path = chain.path + 'CARDS'
+        
+        self.JM.generateCARDS(old_cards_path, new_cards_path, job.params_string, job.SID)
+
+        # Fill the chain
+        for file in required_files:
+            if file != 'CARDS':
+                shutil.copy2(old_model_path + file, chain.path + file, follow_symlinks=False)
+        shutil.copy2(old_model_path + 'MODEL', chain.path + 'MODEL_OLD')
+
+
+        # Bookkeeping
+        job.change_chain(chain.number)
+        chain.assign_SID(job.SID)
+        self.CM.write_chain_comment(chain)
 
     def Queue(self):
         '''
@@ -438,8 +450,11 @@ class Scheduler:
             schedule_raw = f.readlines()
 
         schedule_headstr = schedule_raw[0] + schedule_raw[1]
-        schedule_list = schedule_raw[2:]
+        schedule_list = [line for line in schedule_raw[2:] if '|' in line]
 
+        if schedule_list == []:
+            print('[QUEUE] No new jobs to queue.')
+        
         for line in schedule_list:
             params = line.split('|')
             new_SID = self.JM.create_job(int(params[0][9:15]), params[1].strip().upper(), params[2].strip())
@@ -458,13 +473,20 @@ class Scheduler:
 
         loadable_jobs = [j for j in waiting_jobs if self.JM.ready_to_stage(j)]
         
-        jobs_list = self.prioritize_jobs(loadable_jobs)
+        jobs_list = self.JM.prioritize_jobs(loadable_jobs)
+
+        if jobs_list == []:
+            print("[STAGE] No jobs to stage.")
+            return
+        elif free_chains == []:
+            print("[STAGE] No free chains to load jobs.")
+            return
 
         chain_counter = 0
         for job in jobs_list:
             try:
                 chain_to_use = free_chains[chain_counter]
-                self.JM.load_job_to_chain(job, chain_to_use)
+                self.load_job_to_chain(job, chain_to_use)
                 job.change_status('Ready')
                 print("[STAGE] Job SID {:06} successfully loaded into Chain {}.".format(job.SID, chain_to_use.number))
                 chain_counter += 1
@@ -472,7 +494,7 @@ class Scheduler:
                 print("[STAGE] Warning! Job with SID {:06} could not be loaded.\n".format(job.SID) + str(e))
             if chain_counter == len(free_chains):
                 break
-
+        
         self.JM.save_jobs_file()
     
 
@@ -482,22 +504,49 @@ class Scheduler:
         '''
         ready_jobs = self.JM.filter_by_status('Ready')
 
-        machine_occupancy = self.get_machine_occupancy()
-        machine_order = self.make_machine_order(machine_occupancy)
+        change_made = False
+        if ready_jobs != []:
+            machine_occupancy = self.get_machine_occupancy()
+            machine_order = self.make_machine_order(machine_occupancy)
 
-        for job, host in zip(ready_jobs, machine_order):
-            self.JM.submit_job(job, host)
-            print('[SUBMIT] Job SID {:06} : wrstart chain {} submitted to {}.'.format(
-                job.SID, job.currentChain, host
-            ))
-            job.change_status('Active')
+            for job, host in zip(ready_jobs, machine_order):
+                self.JM.submit_job(job, host)
+                print('[SUBMIT] Job SID {:06} : wrstart chain {} submitted to {}.'.format(
+                    job.SID, job.currentChain, host
+                ))
+                job.change_status('Active')
+                change_made = True
 
-        self.JM.save_jobs_file()
+        if change_made:
+            self.JM.save_jobs_file()
+        else:
+            print('[SUBMIT] No jobs to submit.')
 
     def Retrieve(self):
         '''
         Takes converged models and saves them
         '''
+        converged_chains = self.CM.get_converged_chains()
+        if converged_chains != []:
+            for chain in converged_chains:
+                job = self.JM.jobs[chain.currentSID]
+                # TODO: If subdirectory for SID doesn't exist, make it. If it exists, warn, then clear it.
+                # Copy the whole chain into the subdirectory, careful to not follow symlinks
+                
+                # Unlink job and chain attributes
+                job.remove_chain()
+                chain.remove_SID()
+
+                # Update the job status
+                job.change_status('Complete')
+
+                # Let the managers know the change
+                self.CM.write_chain_comment(chain)
+                self.JM.update_model_path(job)
+            
+            self.JM.save_jobs_file()
+        else:
+            print("[RETRIEVE] No converged chains to retrieve.")
 
         # Remember to run JM.update_model_path() *after* status set to Complete.
 
@@ -531,9 +580,16 @@ class Scheduler:
         self.JM.save_jobs_file()
 
 
-configfile = '/home/Tux/jjosiek/tools/postbox/config'
+configfile = '/home/Tux/jjosiek/tools/postbox/testing/config'
 SC = Scheduler(configfile)
-SC.JM.save_jobs_file()
+
+#print(SC.make_machine_order(SC.get_machine_occupancy()))
+#SC.Queue()
+#SC.Stage()
+#SC.Submit()
+#SC.Clean()
+SC.Retrieve()
+#SC.Submit()
 
 #SC.Stage()
 #SC.Submit()
