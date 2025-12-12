@@ -13,6 +13,7 @@ import numpy as np
 import subprocess
 import re
 import os
+import stat
 import shutil
 
 
@@ -58,11 +59,11 @@ class Chain:
 
     
 class ChainManager:
-    def __init__(self, powr_proc, wrdata_path, use_chains):
+    def __init__(self, settings):
         self.chains : dict[int, Chain] = {}
-        self.powr_proc = powr_proc
-        self.wrdata_path = wrdata_path
-        self.usable_numbers = use_chains
+        self.powr_proc = settings['powr_proc']
+        self.wrdata_path = settings['wrdata_path']
+        self.usable_numbers = settings['chain_range']
         self.load_chains()
 
     def get_free_chains(self):
@@ -90,8 +91,8 @@ class ChainManager:
         '''
         stat_output = subprocess.run(self.powr_proc+'status.com', capture_output=True, text=True).stdout.split('\n')
         stat_full = [l.split('\t') for l in stat_output if l[:4] == 'Ket.']
-        stat_cut = [l for l in stat_full if int(l[0][4:]) in self.usable_numbers] 
-        
+        stat_cut = [l for l in stat_full if int(l[0][4:]) in range(*self.usable_numbers)] 
+
         for ket in stat_cut:
             chain_number = int(ket[0][4:])
             chain = Chain(chain_number, 
@@ -130,17 +131,12 @@ class Job:
         
 
 class JobManager:
-    def __init__(self, 
-                 jobs_file, 
-                 schedule_file, 
-                 wrdata_path, 
-                 powr_proc,
-                 save_path):
-        self.jobs_file = jobs_file
-        self.schedule_file = schedule_file
-        self.wrdata_path = wrdata_path
-        self.powr_proc = powr_proc
-        self.save_path = save_path
+    def __init__(self, settings):
+        self.jobs_file = settings['jobs_file']
+        self.schedule_file = settings['schedule_file']
+        self.wrdata_path = settings['wrdata_path']
+        self.powr_proc = settings['powr_proc']
+        self.save_path = settings['save_path']
         self.file_header = None
         self.jobs : dict[int, Job] = {}
         self.load_jobs_file()
@@ -172,7 +168,7 @@ class JobManager:
 
     def update_model_path(self, job:Job):
         if job.status == 'Complete':
-            job.model_path = self.save_path + str(job.SID) + '/'
+            job.model_path = self.save_path + "{:06}/".format(job.SID)
         else:
             job.model_path = None
 
@@ -269,14 +265,10 @@ class Scheduler:
         self.schedule_file = self.settings['schedule_file']
         self.powr_proc = self.settings['powr_proc']
         self.machine_priority = self.settings['machine_priority']
-        self.CM = ChainManager(self.settings['powr_proc'],
-                               self.settings['wrdata_path'],
-                               self.settings['chain_range'])
-        self.JM = JobManager(self.settings['jobs_file'],
-                             self.settings['schedule_file'],
-                             self.settings['wrdata_path'],
-                             self.settings['powr_proc'],
-                             self.settings['save_path'])
+        self.powr_out_path = self.settings['powr_out_path']
+        self.save_path = self.settings['save_path']
+        self.CM = ChainManager(self.settings)
+        self.JM = JobManager(self.settings)
         self.ready_job_consistency_check()
         self.job_chain_crossmatch_check()
         self.active_job_consistency_check()
@@ -339,7 +331,6 @@ class Scheduler:
         if changes_made:
             self.JM.save_jobs_file()
             
-
     
     def get_machine_occupancy(self):
         '''
@@ -434,13 +425,38 @@ class Scheduler:
         for file in required_files:
             if file != 'CARDS':
                 shutil.copy2(old_model_path + file, chain.path + file, follow_symlinks=False)
+            if file == 'MODEL':
+                model_file_path = chain.path + file
+                os.chmod(model_file_path, os.stat(model_file_path).st_mode | stat.S_IWUSR)
         shutil.copy2(old_model_path + 'MODEL', chain.path + 'MODEL_OLD')
-
+        
 
         # Bookkeeping
         job.change_chain(chain.number)
         chain.assign_SID(job.SID)
         self.CM.write_chain_comment(chain)
+
+    def archive_job_data(self, job:Job):
+        '''
+        Saves jobs data to its directory. Practically mimicks PoWR's own modsave.
+        '''
+        destination_dir = self.save_path + '{:06}/'.format(job.SID)
+        powr_output = self.powr_out_path
+        if not os.path.exists(destination_dir):
+            os.makedirs(destination_dir)
+        chain = self.CM.chains[job.currentChain]
+
+        # Copy the whole chain except certain useless files
+        for entry in os.scandir(chain.path):
+            if entry.name not in ['backup', 'next_job', 'next_jobz']:
+                shutil.copy2(entry.path, destination_dir+entry.name, follow_symlinks=False)
+
+        # Copy extra output files from the PoWR output directory
+        for output_file in ['formal{}.out', 'formal{}.plot', 
+                            'wruniq{}.out', 'wruniq{}.plot', 'wrstart.out']:
+            source_file = powr_output + output_file.format(chain.number)
+            dest_file = destination_dir + output_file.format('')
+            shutil.copy2(source_file, dest_file)
 
     def Queue(self):
         '''
@@ -509,9 +525,11 @@ class Scheduler:
             machine_occupancy = self.get_machine_occupancy()
             machine_order = self.make_machine_order(machine_occupancy)
 
+            # Loop cycles through jobs and hosts in parallel and
+            # stops submitting when the first list is exhausted.
             for job, host in zip(ready_jobs, machine_order):
                 self.JM.submit_job(job, host)
-                print('[SUBMIT] Job SID {:06} : wrstart chain {} submitted to {}.'.format(
+                print('[SUBMIT] Job SID {:06} : wrstart on Chain {} submitted to {}.'.format(
                     job.SID, job.currentChain, host
                 ))
                 job.change_status('Active')
@@ -527,11 +545,11 @@ class Scheduler:
         Takes converged models and saves them
         '''
         converged_chains = self.CM.get_converged_chains()
+
         if converged_chains != []:
             for chain in converged_chains:
                 job = self.JM.jobs[chain.currentSID]
-                # TODO: If subdirectory for SID doesn't exist, make it. If it exists, warn, then clear it.
-                # Copy the whole chain into the subdirectory, careful to not follow symlinks
+                self.archive_job_data(job)
                 
                 # Unlink job and chain attributes
                 job.remove_chain()
@@ -543,12 +561,13 @@ class Scheduler:
                 # Let the managers know the change
                 self.CM.write_chain_comment(chain)
                 self.JM.update_model_path(job)
+
+                # Print user output
+                print("[RETRIEVE] Saved model SID {:06} and unloaded from chain {}".format(job.SID, chain.number))
             
             self.JM.save_jobs_file()
         else:
             print("[RETRIEVE] No converged chains to retrieve.")
-
-        # Remember to run JM.update_model_path() *after* status set to Complete.
 
     def Clean(self, sid=None):
         '''
@@ -585,10 +604,11 @@ SC = Scheduler(configfile)
 
 #print(SC.make_machine_order(SC.get_machine_occupancy()))
 #SC.Queue()
-#SC.Stage()
-#SC.Submit()
+SC.Stage()
+SC.Submit()
 #SC.Clean()
-SC.Retrieve()
+#SC.Retrieve()
+#SC.archive_job_data(SC.JM.jobs[900002])
 #SC.Submit()
 
 #SC.Stage()
