@@ -5,7 +5,7 @@ repetetive actions. Human input changes from actively setting up models from
 run to run, to simply confirming the job submission.
 
 Author: Joris Josiek (joris.josiek@uni-heidelberg.de)
-Date: 2025-12-01
+Date: 2025-12-16
 
 '''
 
@@ -15,7 +15,6 @@ import re
 import os
 import stat
 import shutil
-
 
 ###########################################################################
 
@@ -104,9 +103,6 @@ class ChainManager:
                           ket[6])
             self.chains[chain.number] = chain
 
-    
-
-
 #### JOB HANDLING ####
 
 class Job:
@@ -143,7 +139,7 @@ class JobManager:
 
     def load_jobs_file(self):
         '''
-        Loads data file and returns a list of Job objects, in order
+        Loads job data file.
         '''
         with open(self.jobs_file) as f:
             full_file = f.readlines()
@@ -233,7 +229,7 @@ class JobManager:
 
         params_dict = {p.split('=')[0].strip():p.split('=')[1].strip() 
                    for p in params_string.split(',')}
-        params_dict['HEADLINE'] = 'SID{}'.format(sid)
+        params_dict['HEADLINE'] = 'SID {:06}'.format(sid)
 
         if not os.path.exists(old_cards_path):
             raise RuntimeError("Could not generate CARDS. Old CARDS missing from path\n{}".format(old_cards_path))
@@ -261,6 +257,7 @@ class JobManager:
 
 class Scheduler:
     def __init__(self, config_file=None):
+        self.config_file = config_file
         self.settings = self.read_config_file(config_file)
         self.schedule_file = self.settings['schedule_file']
         self.powr_proc = self.settings['powr_proc']
@@ -278,6 +275,8 @@ class Scheduler:
         Make settings dictionary
         '''
         settings_dict = {}
+        if not os.path.exists(config_file):
+            raise RuntimeError("Config file not found at path: {}".format(config_file))
         with open(config_file) as f:
             raw_config = f.readlines()
         split_config = [line.split(':') for line in raw_config if line[0] not in ['#',' ','\n']]
@@ -285,7 +284,10 @@ class Scheduler:
         chain_range_str = settings_dict['chain_range'].split('-')
         settings_dict['chain_range'] = (int(chain_range_str[0]),
                                         int(chain_range_str[1])+1)
-        settings_dict['machine_priority'] = [host.strip() for host in settings_dict['machine_priority'].split(',')]
+        if settings_dict['machine_priority'] != '':
+            settings_dict['machine_priority'] = [host.strip() for host in settings_dict['machine_priority'].split(',')]
+        else:
+            settings_dict['machine_priority'] = []
         return settings_dict
 
         
@@ -295,12 +297,19 @@ class Scheduler:
         '''
         chains_to_sid = {number : self.CM.chains[number].currentSID for number in self.CM.chains}
         sid_to_chains = {sid : self.JM.jobs[sid].currentChain for sid in self.JM.jobs}
+        okay = True
         for number, sid in chains_to_sid.items():
             if sid and (sid not in sid_to_chains or sid_to_chains[sid] != number):
                 print("[SCHEDULER] Warning! Chain {} blocked by wrong label SID {:06}. Check manually.".format(number, sid))
+                okay = False
         for sid, number in sid_to_chains.items():
             if number and (number not in chains_to_sid or chains_to_sid[number] != sid):
                 print("[SCHEDULER] Warning! SID {:06} assigned to unlabeled Chain {}. Check manually.".format(sid, number))
+                okay = False
+        if not okay:
+            print("❌ Job/Chain inconsistencies detected.\n\nCheck jobs file: {}\nCheck chains with stat.".format(self.JM.jobs_file))
+            print("\npostbox.py stopped.")
+            exit()
 
     def ready_job_consistency_check(self):
         '''
@@ -425,9 +434,8 @@ class Scheduler:
         for file in required_files:
             if file != 'CARDS':
                 shutil.copy2(old_model_path + file, chain.path + file, follow_symlinks=False)
-            if file == 'MODEL':
-                model_file_path = chain.path + file
-                os.chmod(model_file_path, os.stat(model_file_path).st_mode | stat.S_IWUSR)
+                if 'FEDAT' not in file:
+                    os.chmod(chain.path + file, os.stat(chain.path+file).st_mode | stat.S_IWUSR)
         shutil.copy2(old_model_path + 'MODEL', chain.path + 'MODEL_OLD')
         
 
@@ -453,14 +461,14 @@ class Scheduler:
 
         # Copy extra output files from the PoWR output directory
         for output_file in ['formal{}.out', 'formal{}.plot', 
-                            'wruniq{}.out', 'wruniq{}.plot', 'wrstart.out']:
+                            'wruniq{}.out', 'wruniq{}.plot', 'wrstart{}.out']:
             source_file = powr_output + output_file.format(chain.number)
             dest_file = destination_dir + output_file.format('')
             shutil.copy2(source_file, dest_file)
 
     def Queue(self):
         '''
-        Queues all the jobs in the scheduler file.
+        Queue all the jobs in the schedule file.
         '''
         with open(self.schedule_file) as f:
             schedule_raw = f.readlines()
@@ -482,7 +490,7 @@ class Scheduler:
 
     def Stage(self):
         '''
-        Takes all waiting jobs and loads them into chains if possible
+        Load all waiting jobs into chains if possible.
         '''
         free_chains = self.CM.get_free_chains()
         waiting_jobs = self.JM.filter_by_status('Waiting')
@@ -516,7 +524,7 @@ class Scheduler:
 
     def Submit(self):
         '''
-        Submits all jobs in the queue.
+        Submit all ready jobs.
         '''
         ready_jobs = self.JM.filter_by_status('Ready')
 
@@ -542,7 +550,7 @@ class Scheduler:
 
     def Retrieve(self):
         '''
-        Takes converged models and saves them
+        Save converged models and frees the chain.
         '''
         converged_chains = self.CM.get_converged_chains()
 
@@ -572,7 +580,7 @@ class Scheduler:
     def Clean(self, sid=None):
         '''
         Cleans up crashed jobs. Marks the job as "Aborted" and removes the sid from the chain.
-        SID parameter can target a specific job, otherwise all crashed jobs are aborted.
+        Pass SID as argument to target a specific job, otherwise all crashed jobs are aborted.
         '''
         if not sid:
             sid_list = [chain.currentSID for chain in self.CM.get_crashed_chains() 
@@ -586,61 +594,137 @@ class Scheduler:
                         self.Clean(s) # A bit of neat recursion here.
         
         else:
-            chain_number = self.JM.jobs[sid].currentChain
+            sid = int(sid)
+            try:
+                chain_number = self.JM.jobs[sid].currentChain
+                if chain_number == None:
+                    print("[CLEAN] Requested SID {:06} is not currently loaded in a chain. No action taken.".format(sid))
+            except KeyError:
+                print("[CLEAN] Requested SID {:06} does not exist.".format(sid))
+                chain_number = None
             if chain_number != None:
                 chain = self.CM.chains[chain_number]
                 chain.remove_SID()
                 subprocess.run([self.powr_proc+'status.com', 'name', 'wruniq{}'.format(chain.number), chain.comment], capture_output=True)
 
-            self.JM.jobs[sid].remove_chain()
-            self.JM.jobs[sid].change_status("Aborted")
-            print("[CLEAN] Aborted SID {:06}.".format(sid))
+                self.JM.jobs[sid].remove_chain()
+                self.JM.jobs[sid].change_status("Aborted")
+                print("[CLEAN] Aborted SID {:06}.".format(sid))
+
         
         self.JM.save_jobs_file()
 
+    def view_dashboard(self):
+        """View current status summary of jobs and chains."""
+        complete_jobs = len(self.JM.filter_by_status('Complete'))
+        aborted_jobs = len(self.JM.filter_by_status('Aborted'))
+        active_jobs = len(self.JM.filter_by_status('Active'))
+        ready_jobs = len(self.JM.filter_by_status('Ready'))
+        waiting_jobs = len(self.JM.filter_by_status('Waiting'))
+        running_chains = len(self.CM.get_active_chains())
+        converged_chains = len(self.CM.get_converged_chains())
+        crashed_chains = len(self.CM.get_crashed_chains())
+        free_chains = len(self.CM.get_free_chains())
+        print()
+        print("-"*80)
+        print("[ Config file: {} ]".format(self.config_file))
+        print("-"*80)
+        print("JOBS:")
+        print("  {} In Progress ({} Waiting 😴 | {} Ready 🫡  | {} Active 😎)".format(waiting_jobs +ready_jobs +active_jobs,
+                                                                            waiting_jobs, ready_jobs, active_jobs))
 
-configfile = '/home/Tux/jjosiek/tools/postbox/testing/config'
-SC = Scheduler(configfile)
-
-#print(SC.make_machine_order(SC.get_machine_occupancy()))
-#SC.Queue()
-SC.Stage()
-SC.Submit()
-#SC.Clean()
-#SC.Retrieve()
-#SC.archive_job_data(SC.JM.jobs[900002])
-#SC.Submit()
-
-#SC.Stage()
-#SC.Submit()
-
-#SC.Submit()
-#SC.Queue()
-#SC.JM.generateCARDS('/home/Tux/jjosiek/tools/powr-scheduler/cards/CARDS_sid900002',
-#                   '/home/Tux/jjosiek/tools/powr-scheduler/cards/CARDS_test',
-#                   "HYDROGEN=0.6710, BETA=1.2, TEFF=22000.")
-#print(SC.get_machine_occupancy())
+        print("  {} Past ({} Complete 😄 | {} Aborted 😵)".format(complete_jobs +aborted_jobs,
+                                                            complete_jobs, aborted_jobs))
+        print()
+        print("CHAINS:")
+        print("  {} Active ({} Running 🌟, {} Converged 🤩, {} Crashed 🫠 )".format(running_chains +converged_chains +crashed_chains,
+                                                                          running_chains, converged_chains, crashed_chains))
+        print("  {} Free".format(free_chains))
+        print("-"*80)
+        print()
+        if crashed_chains != 0:
+            print("The following crashed models require your attention:\n")
+            for chain in self.CM.get_crashed_chains():
+                print("  SID {:06} in Chain {}".format(chain.currentSID, chain.number))
+            print("\nTreat manually, or clean.\n")
 
 
+def launch_interactive_shell(config_path):
 
-def view_dashboard():
-    '''
-    Dashboard viewer to display all active and scheduled jobs
-    '''
+    print("\n\n-----")
+    print(" PoWR Scheduling Toolbox [postbox.py] ")
+    print("-----")
 
-def upon_startup():
-    '''
-    What is shown when starting the scheduler.
-    '''
-    # X total jobs
-    # X active
-    # X ready to submit
-    # X waiting
-    # X ready to schedule
+    SC = Scheduler(config_path)
+    SC.view_dashboard()
 
-    # X chains total
-    # X running
-    # X converged
-    # X crashed
-    # X free
+    def help():
+        """View this help text."""
+        print()
+        for com_name, com_func in command_dict.items():
+            print("{} : {}".format(com_name, com_func.__doc__.strip()))
+        print()
+
+    def auto_update():
+        """Automatically run through one scheduler cycle of Retrieve, Queue, Stage, Submit."""
+        SC.Retrieve()
+        SC.Queue()
+        SC.Stage()
+        SC.Submit()
+
+    def exit_scheduler():
+        """Exit the postbox."""
+        exit()
+
+    command_dict = {'help':help,
+                    'exit':exit_scheduler,
+                    'auto':auto_update,
+                    'stat':SC.view_dashboard,
+                    'retrieve':SC.Retrieve,
+                    'queue':SC.Queue,
+                    'stage':SC.Stage,
+                    'submit':SC.Submit,
+                    'clean':SC.Clean}
+
+    print()
+    while True:
+        command = input("\n>>> ").split(' ')
+        args = []
+        if len(command) > 1:
+            args = command[1:]
+        func = command_dict.get(command[0])
+        if func is None:
+            print("Command does not exist. Type help for list of available commands.")
+            continue
+        try:
+            func(*args)
+        except TypeError:
+            print("Command syntax incorrect.")
+
+def main():
+
+    import argparse
+    parser = argparse.ArgumentParser(description="PoWR Scheduling Toolbox")
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to config file (overrides default config)"
+    )
+
+    args = parser.parse_args()
+
+    user_home = os.environ['HOME']
+    if args.config:
+        config_path = args.config
+        if config_path[0] != '/':
+            config_path = os.getcwd() + '/{}'.format(config_path)
+    else:
+        config_path = '{}/.postbox/configs/default'.format(user_home)
+
+    launch_interactive_shell(config_path)
+
+if __name__ == "__main__":
+    main()
+
 
