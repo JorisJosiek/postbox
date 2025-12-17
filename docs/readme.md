@@ -76,4 +76,4 @@ You can initialize an instance of the Scheduler by passing the config file path:
 
 Note that the argument is mandatory, since there is no default config file for the modular postbox. This is to ensure that scripts behave predictably, even if the default config is changed.
 
-Your Scheduler object owns instances of the JobManager (```myPostbox.JM```) and ChainManager (```myPostbox.CM```) objects, which you can use to handle jobs and chains, respectively. At the same time, the Scheduler has a variety of methods to perform specific sequences of tasks such as submitting and saving jobs.
+Your Scheduler object owns instances of the JobManager (```myPostbox.JM```) and ChainManager (```myPostbox.CM```) objects, which you can use to handle jobs and chains, respectively. At the same time, the Scheduler has a variety of methods to perform specific sequences of tasks such as submitting and saving jobs. See the manual for more details.
