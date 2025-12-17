@@ -10,9 +10,16 @@
 3. Make your chains using PoWR's ```makechain```. You must make all the chains in the range defined by ```chain_range``` in the config file.
 4. Insert some old models into the system. (See "Tracking external old models")
 
-## Using multiple configs in parallel
+## Typical workflow
 
-You can rerun ```setup.sh``` as many times as you like to create different configs for the postbox. If you attempt to reuse a config name, a warning will be issued to you, since this will entail overwriting the jobs database and is equivalent to a full reset of a previous setup. At the end, the setup tool will ask whether you would like to use your new configuration as default. The default configuration is a symlink pointing to one of your config files and is located at ```~/.postbox/configs/default```. When not told otherwise, the postbox will always take this file for extracting configuration settings.
+After some setup, the typical repeating workflow is designed to be minimalistic.
+
+1. Edit schedule file to define new models in batch. (see below)
+2. Run ```postbox.py```
+3. Type ```auto```
+4. Type ```exit```
+
+For details on the commands, see the manual.
 
 ## Defining new jobs
 
@@ -24,6 +31,10 @@ where ```SID``` is followed by a six-digit zero-padded scheduler ID of a saved o
 
 ```from SID 000001 | Teff=40000., log ggrav=3.85 | example model```
 
+When this model is ready to be loaded into a chain, this line instructs the postbox to copy the model saved under ```save_path/000001/```, and modify the effective temperature and gravity in the ```CARDS``` file.
+
+After the models have been loaded by the postbox, the schedule file is reset to its initial state.
+
 ## Tracking external old models
 
 Currently, the postbox does not support running models from LTESTART, so an old model must be selected when scheduling a new model. This model must have an SID and be saved in the relevant location. This means that before you run the postbox for the first time, you must somehow inject some external old models into the postbox so that they can be tracked.
@@ -33,6 +44,10 @@ Currently, the postbox does not support running models from LTESTART, so an old 
 3. Take your model files and save them in ```save_path/######/```, where ```save_path``` is the path defined in your config, and ```######``` is the SID you chose in step 2. The required model files are ```CARDS```, ```DATOM```, ```FEDAT```, ```FEDAT_FORMAL```, ```FGRID```, ```FORMAL_CARDS```, ```MODEL```, ```NEWDATOM_INPUT```, and ```NEWFORMAL_CARDS_INPUT```. If any of these files are not present, the postbox will not be able to load any dependent models.
 
 These steps ensure that your model is tracked by the postbox (it is in the jobs file), and that the postbox can find the model files when it needs them.
+
+## Using multiple configs in parallel
+
+You can rerun ```setup.sh``` as many times as you like to create different configs for the postbox. If you attempt to reuse a config name, a warning will be issued to you, since this will entail overwriting the jobs database and is equivalent to a full reset of a previous setup. At the end, the setup tool will ask whether you would like to use your new configuration as default. The default configuration is a symlink pointing to one of your config files and is located at ```~/.postbox/configs/default```. When not told otherwise, the postbox will always take this file for extracting configuration settings.
 
 ## Using the ```postbox``` in interactive mode
 
