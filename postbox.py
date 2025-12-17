@@ -222,6 +222,18 @@ class JobManager:
                         'wrstart{}'.format(job.currentChain), 
                         'to-{}'.format(host)], capture_output=True)
 
+    def view_jobs(self, jobs_list:list[Job]):
+        for job in jobs_list:
+            print_str = "SID {:06} {:>8}".format(job.SID, job.status)
+            if job.params_string != "":
+                print_str = print_str +  " ({:<20})".format(job.params_string)
+            if job.currentChain != None:
+                print_str = print_str + " [Chain {:<4}]".format(job.currentChain)
+            if job.dependent_SID != None:
+                print_str = print_str + " from SID {:06}".format(job.dependent_SID)
+            print_str = print_str + " | {}".format(job.comment)
+            print(print_str)
+
     def generateCARDS(self, old_cards_path, new_cards_path, params_string, sid=999999):
         '''
         Generates CARDS file.
@@ -492,6 +504,7 @@ class Scheduler:
         '''
         Load all waiting jobs into chains if possible.
         '''
+        self.CM.load_chains()
         free_chains = self.CM.get_free_chains()
         waiting_jobs = self.JM.filter_by_status('Waiting')
 
@@ -552,6 +565,7 @@ class Scheduler:
         '''
         Save converged models and frees the chain.
         '''
+        self.CM.load_chains()
         converged_chains = self.CM.get_converged_chains()
 
         if converged_chains != []:
@@ -583,6 +597,7 @@ class Scheduler:
         Pass SID as argument to target a specific job, otherwise all crashed jobs are aborted.
         '''
         if not sid:
+            self.CM.load_chains()
             sid_list = [chain.currentSID for chain in self.CM.get_crashed_chains() 
                         if self.JM.jobs[chain.currentSID].status == 'Active']
             if len(sid_list) == 0:
@@ -614,6 +629,7 @@ class Scheduler:
         
         self.JM.save_jobs_file()
 
+
     def view_dashboard(self):
         """View current status summary of jobs and chains."""
         complete_jobs = len(self.JM.filter_by_status('Complete'))
@@ -621,6 +637,7 @@ class Scheduler:
         active_jobs = len(self.JM.filter_by_status('Active'))
         ready_jobs = len(self.JM.filter_by_status('Ready'))
         waiting_jobs = len(self.JM.filter_by_status('Waiting'))
+        self.CM.load_chains()
         running_chains = len(self.CM.get_active_chains())
         converged_chains = len(self.CM.get_converged_chains())
         crashed_chains = len(self.CM.get_crashed_chains())
@@ -641,7 +658,6 @@ class Scheduler:
                                                                           running_chains, converged_chains, crashed_chains))
         print("  {} Free".format(free_chains))
         print("-"*80)
-        print()
         if crashed_chains != 0:
             print("The following crashed models require your attention:\n")
             for chain in self.CM.get_crashed_chains():
@@ -651,7 +667,7 @@ class Scheduler:
 
 def launch_interactive_shell(config_path):
 
-    print("\n\n-----")
+    print("\n-----")
     print(" PoWR Scheduling Toolbox [postbox.py] ")
     print("-----")
 
@@ -671,6 +687,15 @@ def launch_interactive_shell(config_path):
         SC.Queue()
         SC.Stage()
         SC.Submit()
+    
+    def edit_schedule():
+        """Edit the schedule file"""
+        subprocess.run(["nano", str(SC.settings['schedule_file'])])
+
+    def show_completed():
+        """List completed jobs"""
+        complete_jobs = SC.JM.filter_by_status('Complete')
+        SC.JM.view_jobs(complete_jobs)
 
     def exit_scheduler():
         """Exit the postbox."""
@@ -680,13 +705,14 @@ def launch_interactive_shell(config_path):
                     'exit':exit_scheduler,
                     'auto':auto_update,
                     'stat':SC.view_dashboard,
+                    'edit':edit_schedule,
                     'retrieve':SC.Retrieve,
                     'queue':SC.Queue,
                     'stage':SC.Stage,
                     'submit':SC.Submit,
-                    'clean':SC.Clean}
+                    'clean':SC.Clean,
+                    'listc':show_completed}
 
-    print()
     while True:
         command = input("\n>>> ").split(' ')
         args = []
