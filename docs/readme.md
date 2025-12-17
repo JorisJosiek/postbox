@@ -1,4 +1,4 @@
-# PoWR Scheduling Toolbox (```postbox.py```) Manual
+# PoWR Scheduling Toolbox (```postbox.py```) Introduction
 
 ## First-time Setup
 
@@ -33,3 +33,11 @@ Once the postbox is launched, you will see a status summary showing your jobs an
 Make sure the ```postbox.py``` file can be imported into a Python script (e.g. by updating your Python path environment variable).
 
 Then, you can access the full capabilities of the postbox after ```import postbox```.
+
+You can initialize an instance of the Scheduler by passing the config file path:
+
+```myPostbox = postbox.Scheduler('/path/to/config/')```
+
+Note that the argument is mandatory, since there is no default config file for the modular postbox. This is to ensure that scripts behave predictably, even if the default config is changed.
+
+Your Scheduler object owns instances of the JobManager (```myPostbox.JM```) and ChainManager (```myPostbox.CM```) objects, which you can use to handle jobs and chains, respectively. At the same time, the Scheduler has a variety of methods to perform specific sequences of tasks such as submitting and saving jobs.
