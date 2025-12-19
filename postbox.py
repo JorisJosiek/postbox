@@ -221,6 +221,16 @@ class JobManager:
         subprocess.run([self.powr_proc+'submit.com', 
                         'wrstart{}'.format(job.currentChain), 
                         'to-{}'.format(host)], capture_output=True)
+        
+    def get_dependency_chain(self, job:Job):
+        '''
+        Returns ordered list of models following the chain of dependencies.
+        '''
+        model_list = [job]
+        while model_list[-1].dependent_SID != None:
+            model_list.append(self.jobs[model_list[-1].dependent_SID])
+        return model_list
+
 
     def view_jobs(self, jobs_list:list[Job]):
         for job in jobs_list:
@@ -697,6 +707,26 @@ def launch_interactive_shell(config_path):
         complete_jobs = SC.JM.filter_by_status('Complete')
         SC.JM.view_jobs(complete_jobs)
 
+    def show_current():
+        """List current Waiting, Ready, and Active Jobs"""
+        active_jobs = SC.JM.filter_by_status('Active')
+        ready_jobs = SC.JM.filter_by_status('Ready')
+        waiting_jobs = SC.JM.filter_by_status('Waiting')
+        SC.JM.view_jobs(active_jobs+ready_jobs+waiting_jobs)
+
+    def view_traceback(sid):
+        """View dependency chain for a given SID"""
+        try:
+            sid = int(sid)
+        except ValueError:
+            print('Invalid SID.')
+            return
+        try:
+            model_list = SC.JM.get_dependency_chain(SC.JM.jobs[sid])
+            SC.JM.view_jobs(model_list)
+        except KeyError:
+            print('Job SID {:06} does not exist.'.format(sid))     
+
     def exit_scheduler():
         """Exit the postbox."""
         exit()
@@ -711,7 +741,9 @@ def launch_interactive_shell(config_path):
                     'stage':SC.Stage,
                     'submit':SC.Submit,
                     'clean':SC.Clean,
-                    'listc':show_completed}
+                    'listc':show_completed,
+                    'list':show_current,
+                    'trace':view_traceback}
 
     while True:
         command = input("\n>>> ").split(' ')
