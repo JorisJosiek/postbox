@@ -249,8 +249,13 @@ class JobManager:
         Generates CARDS file.
         '''
 
-        params_dict = {p.split('=')[0].strip():p.split('=')[1].strip() 
-                   for p in params_string.split(',')}
+        if ',' in params_string:
+            params_dict = {p.split('=')[0].strip():p.split('=')[1].strip() 
+                    for p in params_string.split(',')}
+        else:
+            # Happens when user does not pass any parameters.
+            # (e.g. to rerun a model, or make manual changes only)
+            params_dict = {}
         params_dict['HEADLINE'] = 'SID {:06}'.format(sid)
 
         if not os.path.exists(old_cards_path):
@@ -714,6 +719,41 @@ def launch_interactive_shell(config_path):
         waiting_jobs = SC.JM.filter_by_status('Waiting')
         SC.JM.view_jobs(active_jobs+ready_jobs+waiting_jobs)
 
+    def stat_chains():
+        """Lists active jobs and their chain status"""
+        active_jobs = SC.JM.filter_by_status('Active')
+
+        SC.CM.load_chains()
+        free_chains = [chain.number for chain in SC.CM.get_free_chains()]
+        crashed_chains = [chain.number for chain in SC.CM.get_crashed_chains()]
+        active_chains = [chain.number for chain in SC.CM.get_active_chains()]
+        converged_chains = [chain.number for chain in SC.CM.get_converged_chains()]
+        
+        crashed_jobs = [job for job in active_jobs if job.currentChain in crashed_chains]
+        converged_jobs = [job for job in active_jobs if job.currentChain in converged_chains]
+        running_jobs = [job for job in active_jobs if job.currentChain in active_chains]
+
+        if crashed_jobs != []:
+            print("=== CRASHED JOBS ===")
+            SC.JM.view_jobs(crashed_jobs)
+            print()
+        
+        if converged_jobs != []:
+            print("=== CONVERGED JOBS ===")
+            SC.JM.view_jobs(converged_jobs)
+            print()
+
+        if running_jobs != []:
+            print("=== RUNNING JOBS ===")
+            SC.JM.view_jobs(running_jobs)
+            print()
+
+        if free_chains != []:
+            print("=== FREE CHAINS ===")
+            print(free_chains)
+            print()
+
+
     def view_traceback(sid):
         """View dependency chain for a given SID"""
         try:
@@ -743,6 +783,7 @@ def launch_interactive_shell(config_path):
                     'clean':SC.Clean,
                     'listc':show_completed,
                     'list':show_current,
+                    'statc':stat_chains,
                     'trace':view_traceback}
 
     while True:
