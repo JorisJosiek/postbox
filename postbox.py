@@ -581,31 +581,32 @@ class Scheduler:
         self.CM.load_chains()
         converged_chains = self.CM.get_converged_chains()
 
-        if converged_chains != []:
-            for chain in converged_chains:
-                job = self.JM.jobs[chain.currentSID]
-                # Important, because otherwise this affects Ready jobs whose chain
-                # still shows previous converged status.
-                if job.status != 'Active':
-                    continue
-                self.archive_job_data(job)
-                
-                # Unlink job and chain attributes
-                job.remove_chain()
-                chain.remove_SID()
-
-                # Update the job status
-                job.change_status('Complete')
-
-                # Let the managers know the change
-                self.CM.write_chain_comment(chain)
-                self.JM.update_model_path(job)
-
-                # Print user output
-                print("[RETRIEVE] Saved model SID {:06} and unloaded from chain {}".format(job.SID, chain.number))
+        change_made = False
+        for chain in converged_chains:
+            job = self.JM.jobs[chain.currentSID]
+            # Important, because otherwise this affects Ready jobs whose chain
+            # still shows previous converged status.
+            if job.status != 'Active':
+                continue
+            self.archive_job_data(job)
             
-            self.JM.save_jobs_file()
-        else:
+            # Unlink job and chain attributes
+            job.remove_chain()
+            chain.remove_SID()
+
+            # Update the job status
+            job.change_status('Complete')
+            change_made = True
+
+            # Let the managers know the change
+            self.CM.write_chain_comment(chain)
+            self.JM.update_model_path(job)
+
+            # Print user output
+            print("[RETRIEVE] Saved model SID {:06} and unloaded from chain {}".format(job.SID, chain.number))
+        
+        self.JM.save_jobs_file()
+        if not change_made:
             print("[RETRIEVE] No converged chains to retrieve.")
 
     def Clean(self, sid=None):
