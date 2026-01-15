@@ -584,6 +584,10 @@ class Scheduler:
         if converged_chains != []:
             for chain in converged_chains:
                 job = self.JM.jobs[chain.currentSID]
+                # Important, because otherwise this affects Ready jobs whose chain
+                # still shows previous converged status.
+                if job.status != 'Active':
+                    continue
                 self.archive_job_data(job)
                 
                 # Unlink job and chain attributes
