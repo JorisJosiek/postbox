@@ -422,9 +422,7 @@ class Scheduler:
                           'FEDAT_FORMAL', 
                           'FGRID', 
                           'FORMAL_CARDS', 
-                          'MODEL', 
-                          'NEWDATOM_INPUT', 
-                          'NEWFORMAL_CARDS_INPUT']
+                          'MODEL']
         
         required_file_check = {}
         for file in required_files:
