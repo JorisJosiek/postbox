@@ -249,7 +249,7 @@ class JobManager:
         Generates CARDS file.
         '''
 
-        if ',' in params_string:
+        if '=' in params_string:
             params_dict = {p.split('=')[0].strip():p.split('=')[1].strip() 
                     for p in params_string.split(',')}
         else:
